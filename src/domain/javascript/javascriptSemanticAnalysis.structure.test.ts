@@ -72,9 +72,9 @@ describe("JavaScript semantic analysis: structure 1", () => {
     });
     const shadow = onlyBinding(ir, "ipcRenderer");
     expect(shadow.provenance).toEqual({
-      status: "local",
+      status: "unknown",
       origins: [],
-      reason: null,
+      reason: expect.stringContaining("caller"),
     });
     const shadowReference = ir.references.find(
       ({ name, bindingId, role }) =>
