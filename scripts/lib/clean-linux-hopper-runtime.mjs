@@ -1,6 +1,37 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename } from "node:path";
 
+// CPython's interface option ends interpreter parsing; following values are
+// script arguments. -W/-X consume either an attached value or the next operand.
+// https://docs.python.org/3.12/using/cmdline.html
+const pythonScriptOperand = (arguments_) => {
+  for (let index = 1; index < arguments_.length; index++) {
+    const option = arguments_[index];
+    if (option === "--") return arguments_[index + 1];
+    if (option === "-" || option === "") return undefined;
+    if (!option.startsWith("-")) return option;
+    if (option === "--check-hash-based-pycs") {
+      index++;
+      continue;
+    }
+    if (/^--(?:help(?:-env|-xoptions|-all)?|version)$/u.test(option))
+      return undefined;
+    if (option.startsWith("--"))
+      throw new Error(`Unknown Python helper invocation option: ${option}`);
+    for (let character = 1; character < option.length; character++) {
+      const flag = option[character];
+      if ("cmh?V".includes(flag)) return undefined;
+      if (flag === "W" || flag === "X") {
+        if (character === option.length - 1) index++;
+        break;
+      }
+      if (!"bBdEiIOPqRsSuvx".includes(flag))
+        throw new Error(`Unknown Python helper invocation option: ${option}`);
+    }
+  }
+  return undefined;
+};
+
 /**
  * Observe leftover demo processes on a dedicated clean Linux runner, including
  * groups reparented after their launcher exits. This is not ownership proof and
@@ -37,8 +68,12 @@ export const assertCleanLinuxHopperRuntime = async (
       retainedRuntime =
         arguments_[0] === "/opt/hopper/bin/Hopper" ||
         basename(arguments_[0] ?? "") === "Xvfb" ||
-        (basename(arguments_[0] ?? "") === "python3" &&
-          basename(arguments_[1] ?? "") === "hopper-demo-x11.py");
+        (/^python3(?:\.\d+)?$/u.test(basename(arguments_[0] ?? "")) &&
+          arguments_.some(
+            (value) => basename(value) === "hopper-demo-x11.py",
+          ) &&
+          basename(pythonScriptOperand(arguments_) ?? "") ===
+            "hopper-demo-x11.py");
       if (!retainedRuntime && launchers.length > 0) {
         const executable = await stat(`/proc/${entry.name}/exe`, {
           bigint: true,

@@ -73,11 +73,26 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it
-  .runIf(process.platform === "linux")
-  .each(["Xvfb-named Node", "Python helper", "alternate launcher"])(
-  "rejects a reparented %s without signaling it",
-  async (mode) => {
+it.runIf(process.platform === "linux").each([
+  ["Xvfb-named Node", null, true],
+  ["Python helper", [], true],
+  ["Python helper with -u", ["-u"], true],
+  [
+    "Python helper with combined/value options",
+    ["-Bu", "-W", "ignore", "-X", "dev", "--check-hash-based-pycs", "always"],
+    true,
+  ],
+  ["Python helper after --", ["--"], true],
+  [
+    "Python -c script argument",
+    ["-c", "import time; print('ready', flush=True); time.sleep(30)"],
+    false,
+  ],
+  ["Python -m script argument", ["-m", "unrelated"], false],
+  ["alternate launcher", null, true],
+] as const)(
+  "classifies a reparented %s without signaling it",
+  async (mode, pythonOptions, retained) => {
     const runId = randomUUID();
     const childCode =
       "process.title = 'Xvfb'; setInterval(() => {}, 1000); process.send('ready');";
@@ -86,17 +101,19 @@ it
     const alternate = join(directory, "Hopper-alternate");
     const helper = join(directory, "hopper-demo-x11.py");
     const alternateMode = mode === "alternate launcher";
-    const pythonMode = mode === "Python helper";
+    const pythonMode = pythonOptions !== null;
     if (alternateMode) {
       await copyFile("/usr/bin/sleep", launcher);
       await chmod(launcher, 0o700);
       await symlink(launcher, alternate);
     }
-    if (pythonMode)
+    if (pythonMode) {
       await writeFile(
         helper,
         "import time\nprint('ready', flush=True)\ntime.sleep(30)\n",
       );
+      await copyFile(helper, join(directory, "unrelated.py"));
+    }
     const command = alternateMode
       ? alternate
       : pythonMode
@@ -105,7 +122,7 @@ it
     const arguments_ = alternateMode
       ? ["30"]
       : pythonMode
-        ? [helper]
+        ? [...pythonOptions, helper]
         : ["-e", childCode];
     const stdio = alternateMode
       ? "ignore"
@@ -115,7 +132,7 @@ it
     const parentCode = `
       const { spawn } = require('node:child_process');
       const child = spawn(${JSON.stringify(command)}, ${JSON.stringify(arguments_)}, {
-        detached: true, stdio: ${JSON.stringify(stdio)}
+        detached: true, stdio: ${JSON.stringify(stdio)}, cwd: ${JSON.stringify(directory)}
       });
       child.once('error', () => process.exit(1));
       const ready = () => {
@@ -175,11 +192,18 @@ it
           `/proc/${String(pid)}/cmdline`,
           "utf8",
         );
-        expect(commandLine.split("\0").slice(0, 2)).toEqual([command, helper]);
+        expect(
+          commandLine.split("\0").slice(0, pythonOptions.length + 2),
+        ).toEqual([command, ...pythonOptions, helper]);
       }
-      await expect(
-        assertCleanLinuxHopperRuntime(alternateMode ? [launcher] : []),
-      ).rejects.toThrow("Clean Linux runner retained a Hopper demo process");
+      const observation = assertCleanLinuxHopperRuntime(
+        alternateMode ? [launcher] : [],
+      );
+      if (retained)
+        await expect(observation).rejects.toThrow(
+          "Clean Linux runner retained a Hopper demo process",
+        );
+      else await expect(observation).resolves.toBeUndefined();
       // Observation must not terminate the fixture, even though it resembles Xvfb.
       const { stdout: alive } = await execFileAsync("ps", [
         "-p",
