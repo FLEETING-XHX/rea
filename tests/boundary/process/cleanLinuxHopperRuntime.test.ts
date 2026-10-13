@@ -20,6 +20,71 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
 
+it.runIf(process.platform === "linux").each([
+  ["Xvfb", "Clean Linux runner retained a Hopper demo process"],
+  ["Hopper", "Clean Linux runner retained a Hopper demo process"],
+  ["python3", "Cannot identify a command-less Python process"],
+  ["unrelated", undefined],
+] as const)(
+  "observes an unreaped %s without signaling or reaping it",
+  async (name, refusal) => {
+    const directory = await createTestTempDirectory("rea-runtime-zombie-");
+    const executable = join(directory, name);
+    await copyFile("/usr/bin/true", executable);
+    await chmod(executable, 0o700);
+    // WNOWAIT observes exit without reaping. The parent keeps the zombie until
+    // the test closes its stdin, then waitpid performs the actual cleanup.
+    const parent = execFileAsync(
+      "/usr/bin/python3",
+      [
+        "-c",
+        `
+import os, sys
+pid = os.fork()
+if pid == 0:
+    os.execl(sys.argv[1], sys.argv[1])
+try:
+    os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+    print(pid, flush=True)
+    sys.stdin.buffer.read(1)
+finally:
+    os.waitpid(pid, 0)
+`,
+        executable,
+      ],
+      { timeout: 10_000 },
+    );
+    const ready = new Promise<number>((resolve, reject) => {
+      parent.child.stdout?.once("data", (data: Buffer) =>
+        resolve(Number(data.toString().trim())),
+      );
+      parent.catch(reject);
+    });
+    let zombiePid: number | undefined;
+    try {
+      zombiePid = await ready;
+      expect(Number.isSafeInteger(zombiePid)).toBe(true);
+      const prefix = `/proc/${String(zombiePid)}`;
+      expect(await readFile(`${prefix}/cmdline`, "utf8")).toBe("");
+      expect((await readFile(`${prefix}/comm`, "utf8")).trim()).toBe(name);
+      const observation = assertCleanLinuxHopperRuntime([]);
+      if (refusal === undefined)
+        await expect(observation).resolves.toBeUndefined();
+      else await expect(observation).rejects.toThrow(refusal);
+      expect(await readFile(`${prefix}/stat`, "utf8")).toContain(
+        `(${name}) Z `,
+      );
+    } finally {
+      parent.child.stdin?.end("reap");
+      await parent;
+      if (zombiePid !== undefined)
+        await expect(
+          readFile(`/proc/${String(zombiePid)}/stat`, "utf8"),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
+
 it.runIf(process.platform === "linux")(
   "does not treat runtime names in another process's arguments as a runtime",
   async () => {

@@ -62,10 +62,23 @@ export const assertCleanLinuxHopperRuntime = async (
     try {
       // procfs preserves argument boundaries. A caller merely mentioning a
       // runtime in its script text or other arguments is not that runtime.
-      const arguments_ = (
-        await readFile(`/proc/${entry.name}/cmdline`, "utf8")
-      ).split("\0");
+      const commandLine = await readFile(`/proc/${entry.name}/cmdline`, "utf8");
+      const arguments_ = commandLine.split("\0");
+      let kernelCommand;
+      if (commandLine.length === 0) {
+        // Zombies have neither arguments nor an executable link, but keep
+        // their kernel command name until their parent reaps them.
+        kernelCommand = (
+          await readFile(`/proc/${entry.name}/comm`, "utf8")
+        ).replace(/\n$/u, "");
+        if (/^python3(?:\.\d+)?$/u.test(kernelCommand))
+          throw new Error(
+            "Cannot identify a command-less Python process on the clean Linux runner",
+          );
+      }
       retainedRuntime =
+        kernelCommand === "Hopper" ||
+        kernelCommand === "Xvfb" ||
         arguments_[0] === "/opt/hopper/bin/Hopper" ||
         basename(arguments_[0] ?? "") === "Xvfb" ||
         (/^python3(?:\.\d+)?$/u.test(basename(arguments_[0] ?? "")) &&
