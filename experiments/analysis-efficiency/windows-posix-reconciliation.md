@@ -90,3 +90,15 @@ Cold/warm caches and observer differences were not normalized. No latency,
 CPU, memory or model-token improvement is claimed. The fix adds no lookup I/O,
 engine invocation, retry or cache. Complete default replies remain available;
 only compact selected findings and hashes were sent to the investigating agent.
+
+## Main integration replay
+
+Runtime cb0d8a9fef2b907cff2ba27f1e017493e1173eb2, rebased onto main
+73dd8d6ed, again passed the 101 related tests and all four real Windows CLI/MCP
+cases using the unchanged older producer Evidence. Positive results and original
+runtime/layer facts remain identical. Typecheck, lint, dependency and metadata
+checks passed; all five changed files passed formatting independently.
+The full format gate at that main revision failed on the unchanged upstream
+GhidraDoctor.test.ts and GhidraSnapshotCache.test.ts files. The PR does not
+repair those unrelated baseline files. Resource figures above refer to the
+earlier candidate; the integration replay does not establish a speedup.
