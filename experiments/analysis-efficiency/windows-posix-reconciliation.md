@@ -102,3 +102,9 @@ The full format gate at that main revision failed on the unchanged upstream
 GhidraDoctor.test.ts and GhidraSnapshotCache.test.ts files. The PR does not
 repair those unrelated baseline files. Resource figures above refer to the
 earlier candidate; the integration replay does not establish a speedup.
+
+Review found that owning only the Windows test path would still skip that lane
+on a later implementation-only edit. The matcher implementation is now also
+registered in package scope. A source-only classifier case verifies that it
+selects both Windows package and JavaScript recovery lanes; 85 scope checks and
+two curated-path checks pass. Runtime code and the real-data checks are unchanged.
