@@ -1,8 +1,5 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { readdir, stat } from "node:fs/promises";
-
-const execFileAsync = promisify(execFile);
+import { readFile, readdir, stat } from "node:fs/promises";
+import { basename } from "node:path";
 
 /**
  * Observe leftover demo processes on a dedicated clean Linux runner, including
@@ -17,9 +14,6 @@ export const assertCleanLinuxHopperRuntime = async (
       : [process.env.HOPPER_LAUNCHER_PATH]),
   ],
 ) => {
-  const { stdout } = await execFileAsync("ps", ["-ax", "-o", "command="]);
-  if (/\/opt\/hopper\/bin\/Hopper|\bXvfb\b|hopper-demo-x11\.py/u.test(stdout))
-    throw new Error("Clean Linux runner retained a Hopper demo process");
   const launchers = [];
   for (const path of launcherPaths) {
     try {
@@ -28,18 +22,34 @@ export const assertCleanLinuxHopperRuntime = async (
       if (error?.code !== "ENOENT") throw error;
     }
   }
-  if (launchers.length === 0) return;
   // /proc exposes the executed file even when argv[0] names a removed symlink.
   // Compare file identity, not a display path or a process name.
   let inspectionError;
   for (const entry of await readdir("/proc", { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-    let executable;
+    let retainedRuntime;
     try {
-      executable = await stat(`/proc/${entry.name}/exe`, { bigint: true });
+      // procfs preserves argument boundaries. A caller merely mentioning a
+      // runtime in its script text or other arguments is not that runtime.
+      const arguments_ = (
+        await readFile(`/proc/${entry.name}/cmdline`, "utf8")
+      ).split("\0");
+      retainedRuntime =
+        arguments_[0] === "/opt/hopper/bin/Hopper" ||
+        basename(arguments_[0] ?? "") === "Xvfb" ||
+        (basename(arguments_[0] ?? "") === "python3" &&
+          basename(arguments_[1] ?? "") === "hopper-demo-x11.py");
+      if (!retainedRuntime && launchers.length > 0) {
+        const executable = await stat(`/proc/${entry.name}/exe`, {
+          bigint: true,
+        });
+        retainedRuntime = launchers.some(
+          ({ dev, ino }) => dev === executable.dev && ino === executable.ino,
+        );
+      }
     } catch (error) {
       if (error?.code === "ENOENT" || error?.code === "ESRCH") continue;
-      // Other users' executables may be unreadable. The setup lane launches
+      // Other users' process facts may be unreadable. The setup lane launches
       // providers as the caller; unreadable caller-owned processes fail closed.
       if (error?.code === "EACCES") {
         const owner = await stat(`/proc/${entry.name}`).catch((cause) => {
@@ -53,11 +63,7 @@ export const assertCleanLinuxHopperRuntime = async (
       inspectionError ??= error;
       continue;
     }
-    if (
-      launchers.some(
-        ({ dev, ino }) => dev === executable.dev && ino === executable.ino,
-      )
-    )
+    if (retainedRuntime)
       throw new Error("Clean Linux runner retained a Hopper demo process");
   }
   if (inspectionError !== undefined) throw inspectionError;

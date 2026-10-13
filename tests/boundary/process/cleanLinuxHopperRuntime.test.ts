@@ -1,17 +1,77 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, readFile, symlink, unlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  readFile,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
-import { assertCleanLinuxHopperRuntime } from "../../scripts/lib/clean-linux-hopper-runtime.mjs";
-import { completeVerifierRun } from "../../scripts/lib/verifier-run.mjs";
-import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
-import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { assertCleanLinuxHopperRuntime } from "../../../scripts/lib/clean-linux-hopper-runtime.mjs";
+import { completeVerifierRun } from "../../../scripts/lib/verifier-run.mjs";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
+
+it.runIf(process.platform === "linux")(
+  "does not treat runtime names in another process's arguments as a runtime",
+  async () => {
+    const observer = new URL(
+      "../../../scripts/lib/clean-linux-hopper-runtime.mjs",
+      import.meta.url,
+    ).href;
+    const code = `
+      const { assertCleanLinuxHopperRuntime } = await import(${JSON.stringify(observer)});
+      await assertCleanLinuxHopperRuntime([]);
+      console.log('clean');
+    `;
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        code,
+        "Xvfb",
+        "/opt/hopper/bin/Hopper",
+        "hopper-demo-x11.py",
+      ],
+      { timeout: 10_000 },
+    );
+    expect(stdout.trim()).toBe("clean");
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "distinguishes an ordinary Node script with the helper's filename",
+  async () => {
+    const directory = await createTestTempDirectory("rea-runtime-arguments-");
+    const script = join(directory, "hopper-demo-x11.py");
+    const observer = new URL(
+      "../../../scripts/lib/clean-linux-hopper-runtime.mjs",
+      import.meta.url,
+    ).href;
+    await writeFile(
+      script,
+      `
+      import(${JSON.stringify(observer)}).then(async ({ assertCleanLinuxHopperRuntime }) => {
+        await assertCleanLinuxHopperRuntime([]);
+        console.log('clean');
+      });
+    `,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [script], {
+      timeout: 10_000,
+    });
+    expect(stdout.trim()).toBe("clean");
+  },
+);
 
 it
   .runIf(process.platform === "linux")
