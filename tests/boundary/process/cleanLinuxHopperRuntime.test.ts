@@ -75,7 +75,7 @@ it.runIf(process.platform === "linux")(
 
 it
   .runIf(process.platform === "linux")
-  .each(["demo helper", "alternate launcher"])(
+  .each(["Xvfb-named Node", "Python helper", "alternate launcher"])(
   "rejects a reparented %s without signaling it",
   async (mode) => {
     const runId = randomUUID();
@@ -84,25 +84,47 @@ it
     const directory = await createTestTempDirectory("rea-clean-runtime-test-");
     const launcher = join(directory, "Hopper");
     const alternate = join(directory, "Hopper-alternate");
+    const helper = join(directory, "hopper-demo-x11.py");
     const alternateMode = mode === "alternate launcher";
+    const pythonMode = mode === "Python helper";
     if (alternateMode) {
       await copyFile("/usr/bin/sleep", launcher);
       await chmod(launcher, 0o700);
       await symlink(launcher, alternate);
     }
-    const command = alternateMode ? alternate : process.execPath;
-    const arguments_ = alternateMode ? ["30"] : ["-e", childCode];
+    if (pythonMode)
+      await writeFile(
+        helper,
+        "import time\nprint('ready', flush=True)\ntime.sleep(30)\n",
+      );
+    const command = alternateMode
+      ? alternate
+      : pythonMode
+        ? "/usr/bin/python3"
+        : process.execPath;
+    const arguments_ = alternateMode
+      ? ["30"]
+      : pythonMode
+        ? [helper]
+        : ["-e", childCode];
+    const stdio = alternateMode
+      ? "ignore"
+      : pythonMode
+        ? ["ignore", "pipe", "ignore"]
+        : ["ignore", "ignore", "ignore", "ipc"];
     const parentCode = `
       const { spawn } = require('node:child_process');
       const child = spawn(${JSON.stringify(command)}, ${JSON.stringify(arguments_)}, {
-        detached: true, stdio: ${JSON.stringify(alternateMode ? "ignore" : ["ignore", "ignore", "ignore", "ipc"])}
+        detached: true, stdio: ${JSON.stringify(stdio)}
       });
       child.once('error', () => process.exit(1));
-      child.once(${JSON.stringify(alternateMode ? "spawn" : "message")}, () => {
+      const ready = () => {
         process.stdout.write(JSON.stringify({ pid: child.pid, parentPid: process.pid }));
         if (child.connected) child.disconnect();
+        child.stdout?.destroy();
         child.unref();
-      });
+      };
+      ${pythonMode ? "child.stdout.once('data', ready);" : `child.once(${JSON.stringify(alternateMode ? "spawn" : "message")}, ready);`}
     `;
     const parent = execFileAsync(process.execPath, ["-e", parentCode], {
       env: { ...process.env, REA_PROCESS_RUN_ID: runId },
@@ -147,6 +169,13 @@ it
         );
         expect(commandLine.split("\0")[0]).toBe(alternate);
         await unlink(alternate);
+      }
+      if (pythonMode) {
+        const commandLine = await readFile(
+          `/proc/${String(pid)}/cmdline`,
+          "utf8",
+        );
+        expect(commandLine.split("\0").slice(0, 2)).toEqual([command, helper]);
       }
       await expect(
         assertCleanLinuxHopperRuntime(alternateMode ? [launcher] : []),
