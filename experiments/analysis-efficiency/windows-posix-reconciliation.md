@@ -56,7 +56,7 @@ Windows coordinates continue to use win32.relative. Both location matching
 and active-layer scope use this owner. The obsolete host-default import is
 removed; no downstream repair or new path abstraction is introduced.
 
-The related suite passed 101 tests: 15 workflow tests, 84 CI scope tests and
+The related suite passed 102 tests: 15 workflow tests, 85 CI scope tests and
 two curated-path checks. Four simulated Electron Evidence controls cover
 POSIX mismatch/exact matching, Windows case-insensitive matching, the resulting
 asset load state and retained mapping spelling. They are service regressions,
@@ -108,3 +108,15 @@ on a later implementation-only edit. The matcher implementation is now also
 registered in package scope. A source-only classifier case verifies that it
 selects both Windows package and JavaScript recovery lanes; 85 scope checks and
 two curated-path checks pass. Runtime code and the real-data checks are unchanged.
+
+The original production fix merged as
+[1a1b67c88](https://github.com/morluto/rea/commit/1a1b67c88) while this follow-up
+was open. The follow-up was then rebased onto main b69d20a30 and contains only
+the stronger workflow assertions, Windows lane ownership, scope classification
+and this verification record. Its 102 related tests plus two representative
+Ghidra boundary tests and seven IDA input-thinning tests passed after the rebase.
+The complete CI static gate passed all eight tasks and architecture guards;
+the observed duplication was 2.99%. Upstream a0317cf73 corrected the invalid
+FAT fixture and consolidated unrelated duplicated helpers. Those changes and
+the upstream threshold change are part of main, outside this follow-up's diff.
+No production source is duplicated by the follow-up.
